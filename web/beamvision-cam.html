@@ -200,7 +200,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
 <script>
 (function(){
 'use strict';
-const $=s=>document.querySelector(s);const BUILD='cam-b14';
+const $=s=>document.querySelector(s);const BUILD='cam-b16';
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 const C={bg:0x0B0E14,road:0x10141C,lane:0x39445A,edge:0x4C5870,ego:0x2A3140,beam:0xFF9500,
   car:0x56627A,bus:0x6E7A90,truck:0x5F6878,moto:0x9BB0D1,bike:0x8FD1B0,ped:0xF2D6A8,light:0x3B4455,stop:0xC93B3B,
@@ -298,19 +298,56 @@ function buildRoad(){
   for(const x of [right-0.22,left+0.22]){const k=new THREE.Mesh(new THREE.BoxGeometry(0.45,0.16,ROAD_LEN),new THREE.MeshStandardMaterial({color:0x232A36,roughness:.8}));k.position.set(x,0.08,z0);k.receiveShadow=true;roadGroup.add(k);}
   // ego lane guide dashes (thin, our lane only) so the beam has context
 }
-function roadFromOSM(t){
-  const hw=t.highway||'residential';const oneway=t.oneway==='yes';let lanes=parseInt(t.lanes)||0;
+function wayLayout(t){
+  const hw=t.highway||'residential';const oneway=t.oneway==='yes'||/motorway$|_link$/.test(hw)&&t.oneway!=='no';let lanes=parseInt(t.lanes)||0;
   const cls=/motorway|trunk/.test(hw)?'motorway':/primary|secondary|tertiary/.test(hw)?'primary':'residential';
-  if(!lanes)lanes=cls==='motorway'?(oneway?3:6):cls==='primary'?(oneway?2:2):(oneway?1:2);
-  let ours,onc;
-  if(oneway){ours=lanes;onc=0;}else{ours=Math.max(1,Math.round(lanes/2));onc=Math.max(1,lanes-ours);}
+  if(!lanes)lanes=cls==='motorway'?(oneway?3:6):cls==='primary'?2:(oneway?1:2);
+  let ours,onc;if(oneway){ours=lanes;onc=0;}else{ours=Math.max(1,Math.round(lanes/2));onc=Math.max(1,lanes-ours);}
   const lf=parseInt(t['lanes:forward'])||0,lb=parseInt(t['lanes:backward'])||0;if(!oneway&&lf&&lb){ours=lf;onc=lb;}
-  const egoIdx=ours<=2?0:Math.floor((ours-1)/2);
-  const laneW=cls==='motorway'?3.7:cls==='primary'?3.5:3.2;
-  layoutRoad({laneW,ours,oncoming:onc,egoIdx,cls,margin:cls==='residential'?2.0:0.5,name:t.name||''});
+  const laneW=cls==='motorway'?3.7:cls==='primary'?3.5:3.2;const margin=cls==='residential'?1.6:0.4;
+  return {hw,oneway,lanes,cls,ours,onc,laneW,margin,egoIdx:ours<=2?0:Math.floor((ours-1)/2)};
 }
+function roadFromOSM(t){const L=wayLayout(t);layoutRoad({laneW:L.laneW,ours:L.ours,oncoming:L.onc,egoIdx:L.egoIdx,cls:L.cls,margin:L.cls==='residential'?2.0:0.5,name:t.name||''});}
 layoutRoad({laneW:LANE_W,ours:1,oncoming:1,egoIdx:0,cls:'residential',margin:2.0});
 
+/* ---------- buildings & mapped signals ---------- */
+const bldgMat=new THREE.MeshStandardMaterial({color:0x151A24,roughness:.9,metalness:.05,envMapIntensity:.15,flatShading:true});
+const bldgEdgeMat=new THREE.LineBasicMaterial({color:0x2A3242,transparent:true,opacity:.6});
+let bldgMesh=null,bldgLines=null,signalGroup=null;
+function buildBuildings(){
+  if(bldgMesh){roadWorld.remove(bldgMesh);bldgMesh.geometry.dispose();bldgMesh=null;}
+  if(bldgLines){roadWorld.remove(bldgLines);bldgLines.geometry.dispose();bldgLines=null;}
+  const B=WORLD.buildings||[];if(!B.length)return;
+  const pos=[],nrm=[],lin=[];
+  for(const b of B){
+    const p=b.pts;const n=p.length-((Math.abs(p[0].x-p[p.length-1].x)<0.01&&Math.abs(p[0].z-p[p.length-1].z)<0.01)?1:0);if(n<3)continue;
+    const ring=p.slice(0,n);const h=b.h;
+    // walls
+    for(let i=0;i<n;i++){const a=ring[i],c=ring[(i+1)%n];const dx=c.x-a.x,dz=c.z-a.z;const l=Math.hypot(dx,dz)||1;const nx=dz/l,nz=-dx/l;
+      pos.push(a.x,0,a.z, c.x,0,c.z, c.x,h,c.z,  a.x,0,a.z, c.x,h,c.z, a.x,h,a.z);for(let k=0;k<6;k++)nrm.push(nx,0,nz);
+      lin.push(a.x,h,a.z,c.x,h,c.z);}
+    // roof via ShapeUtils (2D in x,z)
+    const v2=ring.map(q=>new THREE.Vector2(q.x,q.z));const area=THREE.ShapeUtils.area(v2);const poly=area>0?v2.slice().reverse():v2;
+    let tris=[];try{tris=THREE.ShapeUtils.triangulateShape(poly,[]);}catch(e){}
+    for(const t of tris){for(const i of [t[0],t[2],t[1]]){pos.push(poly[i].x,h,poly[i].y);nrm.push(0,1,0);}}
+  }
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(nrm,3));
+  bldgMesh=new THREE.Mesh(g,bldgMat);bldgMesh.castShadow=false;roadWorld.add(bldgMesh);
+  const lg=new THREE.BufferGeometry();lg.setAttribute('position',new THREE.Float32BufferAttribute(lin,3));bldgLines=new THREE.LineSegments(lg,bldgEdgeMat);roadWorld.add(bldgLines);
+}
+function buildSignals(){
+  if(signalGroup){roadWorld.remove(signalGroup);signalGroup.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
+  signalGroup=new THREE.Group();roadWorld.add(signalGroup);
+  for(const n of WORLD.nodes||[]){
+    // find nearest way to offset the sign to the right kerb of that road
+    let best=null,bd=1e9;
+    for(const w of WORLD.ways){const p=w.pts;for(let i=0;i<p.length-1;i++){const ax=p[i].x,az=p[i].z,bx=p[i+1].x,bz=p[i+1].z;const dx=bx-ax,dz=bz-az;const l2=dx*dx+dz*dz||1e-6;let t=((n.x-ax)*dx+(n.z-az)*dz)/l2;t=Math.max(0,Math.min(1,t));const d=Math.hypot(n.x-(ax+dx*t),n.z-(az+dz*t));if(d<bd){bd=d;best={w,tx:dx/Math.sqrt(l2),tz:dz/Math.sqrt(l2)};}}}
+    const g=new THREE.Group();const m=paintMat(C[n.kind==='stop'?'stop':'light']);
+    builders[n.kind==='stop'?'stop':'light'](g,m);
+    let ox=0,oz=0;if(best&&bd<25){const off=(best.w.total||8)/2+1.2;ox=-best.tz*off;oz=best.tx*off;}
+    g.position.set(n.x+ox,0,n.z+oz);g.userData.kind=n.kind;signalGroup.add(g);
+  }
+}
 /* ---------- real-world road from OSM geometry ---------- */
 const WORLD={ready:false,origin:null,ways:[],fetchAt:null,fetching:false,ego:{e:0,n:0},hdg:0,way:null,hasFix:false,snapX:0,snapZ:0};
 const worldRot=new THREE.Group();const worldTrans=new THREE.Group();worldRot.add(worldTrans);scene.add(worldRot);
@@ -338,15 +375,6 @@ function ribbon(pts,width,offset,mat,uvLen,uvW,y){
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setIndex(idx);g.computeVertexNormals();
   const m=new THREE.Mesh(g,mat);m.receiveShadow=true;return m;
 }
-function wayLayout(t){
-  const hw=t.highway||'residential';const oneway=t.oneway==='yes'||/motorway$|_link$/.test(hw)&&t.oneway!=='no';let lanes=parseInt(t.lanes)||0;
-  const cls=/motorway|trunk/.test(hw)?'motorway':/primary|secondary|tertiary/.test(hw)?'primary':'residential';
-  if(!lanes)lanes=cls==='motorway'?(oneway?3:6):cls==='primary'?2:(oneway?1:2);
-  let ours,onc;if(oneway){ours=lanes;onc=0;}else{ours=Math.max(1,Math.round(lanes/2));onc=Math.max(1,lanes-ours);}
-  const lf=parseInt(t['lanes:forward'])||0,lb=parseInt(t['lanes:backward'])||0;if(!oneway&&lf&&lb){ours=lf;onc=lb;}
-  const laneW=cls==='motorway'?3.7:cls==='primary'?3.5:3.2;const margin=cls==='residential'?1.6:0.4;
-  return {hw,oneway,lanes,cls,ours,onc,laneW,margin,egoIdx:ours<=2?0:Math.floor((ours-1)/2)};
-}
 function buildWorld(){
   while(roadWorld.children.length){const o=roadWorld.children.pop();o.traverse(c=>{if(c.geometry)c.geometry.dispose();});}
   for(const w of WORLD.ways){
@@ -363,24 +391,44 @@ function buildWorld(){
     if(!L.oneway){for(let i=1;i<L.onc;i++){const d=ribbon(pts,0.16,-i*L.laneW,dashWorldMat,12,1,0.006);if(d)roadWorld.add(d);}
       if(L.cls==='motorway'){const med=ribbon(pts,1.2,0,kerbMat,1,1,0.25);if(med)roadWorld.add(med);}
       else{for(const x of [-0.16,0.16]){const y=ribbon(pts,0.12,x,yellowMat,1,1,0.006);if(y)roadWorld.add(y);}}}
-    w.centreOff=centreOff;w.ourLeft=ourLeft;
+    w.centreOff=centreOff;w.ourLeft=ourLeft;w.total=total;
+    // junction patches at both ends so crossings don't show gaps
+    for(const end of [pts[0],pts[pts.length-1]]){const disc=new THREE.Mesh(new THREE.CircleGeometry(total/2,20),worldRoadMat);disc.rotation.x=-Math.PI/2;disc.position.set(end.x+ (function(){const q=pts[0]===end?pts[1]:pts[pts.length-2];const dx=end.x-q.x,dz=end.z-q.z;const l=Math.hypot(dx,dz)||1;return -dz/l*centreOff;})(),0.002,end.z+(function(){const q=pts[0]===end?pts[1]:pts[pts.length-2];const dx=end.x-q.x,dz=end.z-q.z;const l=Math.hypot(dx,dz)||1;return dx/l*centreOff;})());disc.receiveShadow=true;roadWorld.add(disc);}
   }
+  buildBuildings();buildSignals();
   WORLD.ready=WORLD.ways.length>0;roadGroup.visible=!WORLD.ready;grid.visible=!WORLD.ready;
 }
 async function fetchWorld(lat,lon){
   if(WORLD.fetching)return;WORLD.fetching=true;S.osmStatus='fetching area…';
   if(!WORLD.origin)WORLD.origin={lat,lon};
-  const q=`[out:json][timeout:15];way(around:400,${lat},${lon})[highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"];out tags geom;`;
+  const v=S.speed/3.6;const radius=Math.min(1600,Math.max(400,400+v*30));
+  // centre the query ahead of the car so fast roads stay loaded
+  const hr=(WORLD.hdg||S.hdg||0)*Math.PI/180;const ahead=radius*0.45;const k=Math.PI/180;
+  const cLat=lat+(Math.cos(hr)*ahead)/(6378137*k),cLon=lon+(Math.sin(hr)*ahead)/(6378137*k*Math.cos(lat*k));
+  WORLD.fetchRadius=radius;WORLD.fetchCentre={lat:cLat,lon:cLon};
+  const rb=Math.min(320,radius);const wantB=S.speed<75;
+  const q=`[out:json][timeout:25];(way(around:${Math.round(radius)},${cLat},${cLon})[highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"];${wantB?`way(around:${rb},${lat},${lon})[building];`:''}node(around:${Math.round(radius)},${cLat},${cLon})[highway~"^(traffic_signals|stop)$"];);out tags geom;`;
   let j=null;
   for(const ep of ['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter']){
     try{const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(q)});if(r.ok){j=await r.json();break;}S.osmStatus='overpass '+r.status;}
     catch(e){S.osmStatus='overpass error: '+e.message;}
   }
   WORLD.fetching=false;
-  if(!j)return;
-  WORLD.ways=(j.elements||[]).filter(w=>w.geometry&&w.geometry.length>1).map(w=>{const pts=w.geometry.map(p=>{const l=toLocal(p.lat,p.lon);return {x:l.e,z:-l.n};});return {id:w.id,tags:w.tags||{},pts,first:true,lay:wayLayout(w.tags||{})};});WORLD.way=null;
+  if(!j){WORLD.fetchAt=WORLD.fetchAt||{lat,lon};return;}
+  const els=j.elements||[];
+  const freshB=els.filter(w=>w.type==='way'&&w.tags&&w.tags.building&&w.geometry&&w.geometry.length>3).map(w=>{const pts=w.geometry.map(p=>{const l=toLocal(p.lat,p.lon);return {x:l.e,z:-l.n};});const t=w.tags;let h=parseFloat(t.height)||(parseInt(t['building:levels'])||0)*3.1||0;if(!h)h=/house|residential|garage|hut|shed/.test(t.building)?5:8;return {id:w.id,pts,h};});
+  const freshN=els.filter(w=>w.type==='node'&&w.tags&&w.lat!=null).map(n=>{const l=toLocal(n.lat,n.lon);return {id:n.id,x:l.e,z:-l.n,kind:n.tags.highway};});
+  const hereB=toLocal(lat,lon);
+  const keepB=(WORLD.buildings||[]).filter(b=>Math.hypot(b.pts[0].x-hereB.e,b.pts[0].z+hereB.n)<900);const haveB=new Set(keepB.map(b=>b.id));for(const b of freshB){if(!haveB.has(b.id))keepB.push(b);}
+  keepB.sort((a,b)=>Math.hypot(a.pts[0].x-hereB.e,a.pts[0].z+hereB.n)-Math.hypot(b.pts[0].x-hereB.e,b.pts[0].z+hereB.n));WORLD.buildings=keepB.slice(0,600);
+  const keepN=(WORLD.nodes||[]).filter(n=>Math.hypot(n.x-hereB.e,n.z+hereB.n)<2500);const haveN=new Set(keepN.map(n=>n.id));for(const n of freshN){if(!haveN.has(n.id))keepN.push(n);}WORLD.nodes=keepN;
+  const fresh=els.filter(w=>w.type==='way'&&w.tags&&w.tags.highway&&w.geometry&&w.geometry.length>1).map(w=>{const pts=w.geometry.map(p=>{const l=toLocal(p.lat,p.lon);return {x:l.e,z:-l.n};});return {id:w.id,tags:w.tags||{},pts,first:true,lay:wayLayout(w.tags||{})};});
+  // merge: keep existing ways within 2.5 km of the car, add new ids
+  const here=toLocal(lat,lon);const keep=WORLD.ways.filter(w=>{const p=w.pts[Math.floor(w.pts.length/2)];return Math.hypot(p.x-here.e,p.z+here.n)<2500;});
+  const have=new Set(keep.map(w=>w.id));for(const w of fresh){if(!have.has(w.id))keep.push(w);}
+  const cur=WORLD.way?WORLD.way.id:null;WORLD.ways=keep;WORLD.way=cur?keep.find(w=>w.id===cur)||null:null;
   WORLD.fetchAt={lat,lon};buildWorld();
-  S.osmStatus='area: '+WORLD.ways.length+' roads';
+  S.osmStatus='area: '+WORLD.ways.length+' roads · '+(WORLD.buildings||[]).length+' bldg · '+(WORLD.nodes||[]).length+' signals · r'+Math.round(WORLD.fetchRadius)+'m';
 }
 function snapEgo(){
   const ex=WORLD.ego.e,ez=-WORLD.ego.n;
@@ -769,7 +817,7 @@ async function osmLookup(){
   }catch(e){S.osmStatus='overpass error: '+e.message;}
 }
 function updateRoadHUD(){
-  H.road.textContent=(S.road||'')+(S.hwClass?'  ·  '+R.ours+'+'+R.oncoming+' lanes':'');
+  H.road.textContent=(S.road||'')+(S.hwClass?'  ·  '+(R.oncoming?R.ours+'+'+R.oncoming:R.ours)+' lanes'+(R.oncoming?'':' one-way'):'');
   H.lim.textContent=S.limit?Math.round(S.limit):'–';
   H.lim.parentElement.classList.toggle('over',!!S.limit&&S.speed>S.limit+3);
 }
@@ -782,7 +830,7 @@ window.addEventListener('deviceorientationabsolute',onOrient,true);
 function startGPS(){
   if(!navigator.geolocation)return;
   navigator.geolocation.watchPosition(p=>{const c=p.coords;let v=(c.speed!=null&&!isNaN(c.speed))?c.speed:0;if(v<0.8||(c.accuracy&&c.accuracy>25&&v<3))v=0;S.gpsSpeed=v*3.6;if(v>1&&c.heading!=null&&!isNaN(c.heading))S.hdg=c.heading;S.lat=c.latitude;S.lon=c.longitude;
-    if(!WORLD.fetchAt||dist(c.latitude,c.longitude,WORLD.fetchAt.lat,WORLD.fetchAt.lon)>220)fetchWorld(c.latitude,c.longitude);
+    if(!WORLD.fetchAt||(WORLD.fetchCentre&&dist(c.latitude,c.longitude,WORLD.fetchCentre.lat,WORLD.fetchCentre.lon)>WORLD.fetchRadius*0.55))fetchWorld(c.latitude,c.longitude);
     if(WORLD.origin){const l=toLocal(c.latitude,c.longitude);const acc=c.accuracy||15;const k=acc<8?0.5:acc<20?0.3:acc<40?0.15:0.05;if(!WORLD.hasFix){WORLD.ego.e=l.e;WORLD.ego.n=l.n;WORLD.hasFix=true;}else{WORLD.ego.e+=(l.e-WORLD.ego.e)*k;WORLD.ego.n+=(l.n-WORLD.ego.n)*k;}S.gpsAcc=acc;}
     if(!WORLD.ready)osmLookup();},
     ()=>{},{enableHighAccuracy:true,maximumAge:500,timeout:10000});
@@ -874,7 +922,12 @@ function frame(now){
   const brake=(gap<8&&S.speed>8)||(gap<5&&S.speed>3);
   H.brake.classList.toggle('hide',!brake);H.brake.classList.toggle('on',brake);
   H.ped.classList.toggle('hide',!pedNear);
-  if(tlState){H.tl.className='glyph '+(tlState==='unknown'?'':tlState);H.tltxt.textContent=tlState==='unknown'?'LIGHT':tlState.toUpperCase();tlHideT=now;}
+  // mapped signal ahead (from OSM), within 120 m in front
+  if(!tlState&&WORLD.ready&&signalGroup){const inv=new THREE.Vector3();let bestD=1e9,kind=null;
+    for(const g of signalGroup.children){inv.copy(g.position);worldTrans.localToWorld(inv);/* already scene coords via parents */;const d=-inv.z;const side=Math.abs(inv.x);if(d>2&&d<120&&side<14&&d<bestD){bestD=d;kind=g.userData.kind;}}
+    if(kind){tlState='unknown';H.tltxt.textContent=(kind==='stop'?'STOP':'LIGHT')+' '+Math.round(bestD)+' m';H.tl.className='glyph';tlHideT=now;}}
+  if(tlState&&H.tl.classList.contains('hide')){H.tl.className='glyph '+(tlState==='unknown'?'':tlState);if(tlState!=='unknown')H.tltxt.textContent=tlState.toUpperCase();tlHideT=now;}
+  else if(tlState&&tlState!=='unknown'){H.tl.className='glyph '+tlState;H.tltxt.textContent=tlState.toUpperCase();tlHideT=now;}
   else if(now-tlHideT>800)H.tl.classList.add('hide');
 
   H.spd.textContent=Math.round(S.speed);
