@@ -30,7 +30,8 @@ html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
 #brand .name{font-size:11px;letter-spacing:.3em;font-weight:600}
 #brand .name b{color:var(--beam);font-weight:600}
 #status{display:flex;gap:14px;align-items:center}
-#status .pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-dim)}
+#status .pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-dim);white-space:nowrap}
+#top{white-space:nowrap}
 #status .dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
 #fps{color:var(--ink-dim);font-size:11px}
 
@@ -113,6 +114,9 @@ body.landscape #alerts{right:calc(var(--safe-r) + 22px);bottom:calc(var(--safe-b
 body.landscape #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 44px)}
 
 body.portrait #speed{left:calc(var(--safe-l) + 20px);top:calc(var(--safe-t) + 52px)}
+body.portrait #brand .name{font-size:10px;letter-spacing:.22em;white-space:nowrap}
+body.portrait #status{gap:10px}
+body.portrait #status .pill,body.portrait #fps,body.portrait #inf,body.portrait #dlg{font-size:10px;white-space:nowrap}
 body.portrait #speed .v{font-size:76px}
 body.portrait #alerts{left:calc(var(--safe-l) + 16px);right:calc(var(--safe-r) + 16px);bottom:calc(var(--safe-b) + 48px);justify-content:center}
 body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60px)}
@@ -150,6 +154,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
 <div id="start"><div class="box"><div class="name">BEAM <b>VISION</b></div><p>Camera test build. Mount the phone on the windshield, then start. Needs HTTPS, camera and location permission, and internet for the first model download.</p><button id="startbtn">Start camera</button><div id="startmsg"></div></div></div>
 <div id="dev">
   <div class="handle" id="devh"><span>PROTOTYPE · <b id="scene-name">—</b></span><span id="devt" class="mono">0.0s</span></div>
+  <div id="werr" class="mono" style="color:var(--amber);font-size:10px;margin-top:6px;word-break:break-all;user-select:text;-webkit-user-select:text"></div>
   <div class="row"><label>Cam FOV</label><input type="range" id="hfov" min="55" max="95" value="70"><span class="val mono" id="hfovv">70°</span></div>
   <div class="row"><label>Cam height</label><input type="range" id="camh" min="90" max="170" value="130"><span class="val mono" id="camhv">1.30m</span></div>
   <div class="row"><label>Pitch</label><input type="range" id="pitch" min="-12" max="12" value="0"><span class="val mono" id="pitchv">0°</span></div>
@@ -540,18 +545,20 @@ function project(box,type){
   return {x:(xc-cx)/fx*d,z:-d};
 }
 
+function isEgo(b){const area=(b.width*b.height)/(S.vw*S.vh);const touchesBottom=(b.originY+b.height)>=S.vh*0.97;return touchesBottom&&area>0.3;}
 /* ---------- detection intake (called from the MediaPipe module) ---------- */
 let nextId=1;const live={};
 window.BV={
   onDetections(dets,vw,vh,ms){S.vw=vw;S.vh=vh;S.detMs=ms;S.dets=dets;S.batch++;},
   status(msg){H.startmsg.textContent=msg;},
   delegate(d){S.delegate=d;$('#dlg').textContent=d;},
+  workerErr(msg){S.workerErr=msg;$('#werr').textContent=msg;console.warn(msg);},
   ready(){H.start.classList.add('hide');},
   S
 };
 function associate(dt){
   const dets=[];
-  for(const d of S.dets){const c=d.categories&&d.categories[0];if(!c||c.score<S.minScore)continue;const type=CLASS[c.categoryName];if(!type)continue;
+  for(const d of S.dets){const c=d.categories&&d.categories[0];if(!c||c.score<S.minScore)continue;const type=CLASS[c.categoryName];if(!type)continue;if(isEgo(d.boundingBox))continue;
     const p=project(d.boundingBox,type);dets.push({type,x:p.x,z:p.z,conf:c.score,state:null,box:d.boundingBox,used:false});}
   // greedy nearest match per track
   const ids=Object.keys(live).sort((a,b)=>live[a].age>live[b].age?-1:1);
@@ -583,7 +590,7 @@ function drawBoxes(){
   g.lineWidth=3;g.font='600 26px system-ui,sans-serif';g.textBaseline='bottom';
   for(const d of S.dets){const c=d.categories&&d.categories[0];if(!c||c.score<S.minScore)continue;const type=CLASS[c.categoryName];
     const b=d.boundingBox,x=ox+b.originX*sc,y=oy+b.originY*sc,w=b.width*sc,h=b.height*sc;
-    const col=type?'#FF9500':'#5A6478';g.strokeStyle=col;g.strokeRect(x,y,w,h);
+    const ego=isEgo(b);const col=ego?'#3A4250':type?'#FF9500':'#5A6478';g.strokeStyle=col;g.setLineDash(ego?[10,8]:[]);g.strokeRect(x,y,w,h);g.setLineDash([]);if(ego)continue;
     if(type){const p=project(b,type);const txt=`${(NAMES[type]||c.categoryName)} ${Math.round(-p.z)}m ·${Math.round(c.score*100)}`;
       const tw=g.measureText(txt).width+16;g.fillStyle='rgba(11,14,20,.8)';g.fillRect(x,y-32,tw,32);g.fillStyle='#E7EBF2';g.fillText(txt,x+8,y-4);}
   }
@@ -681,15 +688,15 @@ window.addEventListener('bv-start',async()=>{
   if(canWorker){
     let worker;
     try{worker=new Worker(URL.createObjectURL(new Blob([WORKER_SRC],{type:'text/javascript'})),{type:'module'});}
-    catch(e){canWorker=false;}
+    catch(e){canWorker=false;BV.workerErr('worker create: '+e.message);}
     if(worker){
       let busy=false,n=0,cnt=0,t0=performance.now(),ready=false;
       worker.onmessage=e=>{const m=e.data;
         if(m.type==='ready'){ready=true;BV.delegate(m.delegate);BV.ready();}
         else if(m.type==='result'){busy=false;BV.onDetections(m.dets,m.w,m.h,m.ms);cnt++;}
-        else if(m.type==='error'){busy=false;if(!ready){BV.status('Worker failed: '+m.msg+' — falling back');worker.terminate();mainThread();}}
+        else if(m.type==='error'){busy=false;if(!ready){BV.workerErr('worker: '+m.msg);worker.terminate();mainThread();}}
       };
-      worker.onerror=e=>{if(!ready){BV.status('Worker error — falling back');worker.terminate();mainThread();}};
+      worker.onerror=e=>{if(!ready){BV.workerErr('worker onerror: '+(e.message||e.filename||'unknown'));worker.terminate();mainThread();}};
       worker.postMessage({type:'init'});
       const loop=async()=>{
         n++;
@@ -707,6 +714,7 @@ window.addEventListener('bv-start',async()=>{
   }
   mainThread();
   async function mainThread(){
+    if(BV.S.every<2){BV.S.every=2;document.getElementById('every').value=2;document.getElementById('everyv').textContent='1/2';}
     const {ObjectDetector,FilesetResolver}=await import(CDN);
     let det;
     try{
