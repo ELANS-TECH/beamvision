@@ -200,7 +200,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
 <script>
 (function(){
 'use strict';
-const $=s=>document.querySelector(s);const BUILD='cam-b13';
+const $=s=>document.querySelector(s);const BUILD='cam-b14';
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 const C={bg:0x0B0E14,road:0x10141C,lane:0x39445A,edge:0x4C5870,ego:0x2A3140,beam:0xFF9500,
   car:0x56627A,bus:0x6E7A90,truck:0x5F6878,moto:0x9BB0D1,bike:0x8FD1B0,ped:0xF2D6A8,light:0x3B4455,stop:0xC93B3B,
@@ -378,19 +378,29 @@ async function fetchWorld(lat,lon){
   }
   WORLD.fetching=false;
   if(!j)return;
-  WORLD.ways=(j.elements||[]).filter(w=>w.geometry&&w.geometry.length>1).map(w=>{const pts=w.geometry.map(p=>{const l=toLocal(p.lat,p.lon);return {x:l.e,z:-l.n};});return {id:w.id,tags:w.tags||{},pts,lay:wayLayout(w.tags||{})};});
+  WORLD.ways=(j.elements||[]).filter(w=>w.geometry&&w.geometry.length>1).map(w=>{const pts=w.geometry.map(p=>{const l=toLocal(p.lat,p.lon);return {x:l.e,z:-l.n};});return {id:w.id,tags:w.tags||{},pts,first:true,lay:wayLayout(w.tags||{})};});WORLD.way=null;
   WORLD.fetchAt={lat,lon};buildWorld();
   S.osmStatus='area: '+WORLD.ways.length+' roads';
 }
 function snapEgo(){
-  const ex=WORLD.ego.e,ez=-WORLD.ego.n;let best=null,bd=1e9;
+  const ex=WORLD.ego.e,ez=-WORLD.ego.n;
+  const hr=WORLD.hdg*Math.PI/180;const fx=Math.sin(hr),fz=-Math.cos(hr);const moving=S.speed>6;
+  let best=null,bc=1e9;
   for(const w of WORLD.ways){const p=w.pts;
     for(let i=0;i<p.length-1;i++){const ax=p[i].x,az=p[i].z,bx=p[i+1].x,bz=p[i+1].z;const dx=bx-ax,dz=bz-az;const l2=dx*dx+dz*dz||1e-6;
       let t=((ex-ax)*dx+(ez-az)*dz)/l2;t=Math.max(0,Math.min(1,t));const qx=ax+dx*t,qz=az+dz*t;const d=Math.hypot(ex-qx,ez-qz);
-      if(d<bd){bd=d;best={w,qx,qz,tx:dx/Math.sqrt(l2),tz:dz/Math.sqrt(l2)};}}
+      if(d>45)continue;
+      const l=Math.sqrt(l2);let tx=dx/l,tz=dz/l;
+      // alignment with travel direction (either way for two-way roads)
+      const dot=tx*fx+tz*fz;const align=w.lay.oneway?dot:Math.abs(dot);
+      let cost=d+(moving?(1-Math.max(-1,Math.min(1,align)))*25:0);
+      if(WORLD.way===w)cost-=6;                       // hysteresis
+      else if(WORLD.way&&w.first&&(shareNode(w,WORLD.way)))cost-=2; // connected road bonus
+      if(cost<bc){bc=cost;best={w,qx,qz,tx,tz,d};}}
   }
-  return best&&bd<40?best:null;
+  return best;
 }
+function shareNode(a,b){const A=a.pts,B=b.pts;const ends=[A[0],A[A.length-1]];for(const e of ends){for(const q of [B[0],B[B.length-1]]){if(Math.abs(e.x-q.x)<0.5&&Math.abs(e.z-q.z)<0.5)return true;}}return false;}
 
 /* ---------- materials & geometry helpers ---------- */
 function box(w,h,d,mat,x,y,z){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);return m;}
@@ -574,10 +584,10 @@ class Track{
     dx=Math.max(-maxLat,Math.min(maxLat,dx));dz=Math.max(-maxLon,Math.min(maxLon,dz));
     this.rx+=dx;this.rz+=dz;
     this.age+=dt;
-    const target=this.last>0.15?Math.max(0,1-(this.last-0.15)/0.7):1;
+    const far=-this.z>45;const target=this.last>0.15?Math.max(0,1-(this.last-0.15)/(far?0.35:0.7)):1;
     const a=Math.min(1,this.age/0.35)*target*(0.35+0.65*Math.min(1,this.conf));
     this.opacity+=(a-this.opacity)*0.2;
-    return this.last<0.9;
+    return this.last<(far?0.5:0.9);
   }
   coast(dt){
     if(this.rx===undefined){this.rx=this.x;this.rz=this.z;}
@@ -763,12 +773,17 @@ function updateRoadHUD(){
   H.lim.textContent=S.limit?Math.round(S.limit):'–';
   H.lim.parentElement.classList.toggle('over',!!S.limit&&S.speed>S.limit+3);
 }
+/* ---------- compass (used below 8 km/h) ---------- */
+S.compass=null;
+function onOrient(e){let h=null;if(typeof e.webkitCompassHeading==='number')h=e.webkitCompassHeading;else if(e.absolute&&typeof e.alpha==='number')h=(360-e.alpha)%360;
+  if(h==null)return;const so=(screen.orientation&&screen.orientation.angle)||0;h=(h+so)%360;S.compass=h;}
+window.addEventListener('deviceorientationabsolute',onOrient,true);
 /* ---------- GPS ---------- */
 function startGPS(){
   if(!navigator.geolocation)return;
   navigator.geolocation.watchPosition(p=>{const c=p.coords;let v=(c.speed!=null&&!isNaN(c.speed))?c.speed:0;if(v<0.8||(c.accuracy&&c.accuracy>25&&v<3))v=0;S.gpsSpeed=v*3.6;if(v>1&&c.heading!=null&&!isNaN(c.heading))S.hdg=c.heading;S.lat=c.latitude;S.lon=c.longitude;
     if(!WORLD.fetchAt||dist(c.latitude,c.longitude,WORLD.fetchAt.lat,WORLD.fetchAt.lon)>220)fetchWorld(c.latitude,c.longitude);
-    if(WORLD.origin){const l=toLocal(c.latitude,c.longitude);if(!WORLD.hasFix){WORLD.ego.e=l.e;WORLD.ego.n=l.n;WORLD.hasFix=true;}else{WORLD.ego.e+=(l.e-WORLD.ego.e)*0.35;WORLD.ego.n+=(l.n-WORLD.ego.n)*0.35;}}
+    if(WORLD.origin){const l=toLocal(c.latitude,c.longitude);const acc=c.accuracy||15;const k=acc<8?0.5:acc<20?0.3:acc<40?0.15:0.05;if(!WORLD.hasFix){WORLD.ego.e=l.e;WORLD.ego.n=l.n;WORLD.hasFix=true;}else{WORLD.ego.e+=(l.e-WORLD.ego.e)*k;WORLD.ego.n+=(l.n-WORLD.ego.n)*k;}S.gpsAcc=acc;}
     if(!WORLD.ready)osmLookup();},
     ()=>{},{enableHighAccuracy:true,maximumAge:500,timeout:10000});
 }
@@ -824,7 +839,7 @@ function frame(now){
       // tangent sign: follow GPS heading
       let tx=sn.tx,tz=sn.tz;const gh=S.hdg*Math.PI/180;const fx=Math.sin(gh),fz=-Math.cos(gh);if(tx*fx+tz*fz<0){tx=-tx;tz=-tz;}
       const roadHdg=Math.atan2(tx,-tz)*180/Math.PI;
-      let target=S.speed>8?roadHdg:WORLD.hdg;let diff=((target-WORLD.hdg+540)%360)-180;WORLD.hdg+=diff*0.15;
+      let target=S.speed>8?roadHdg:(S.compass!=null?S.compass:WORLD.hdg);let diff=((target-WORLD.hdg+540)%360)-180;WORLD.hdg+=diff*(S.speed>8?0.15:0.05);
       // lateral: ego lane centre relative to the way centreline
       const L=sn.w.lay;const lat=L.oneway?sn.w.centreOff+(L.egoIdx-(L.ours-1)/2)*L.laneW*(tx*Math.sin(gh)+tz*(-Math.cos(gh))>=0?1:1):(L.ours-L.egoIdx-0.5)*L.laneW;
       const rx=-tz,rz=tx;const ax=sn.qx+rx*lat,az=sn.qz+rz*lat;
@@ -832,7 +847,7 @@ function frame(now){
       if(WORLD.snapX===undefined||isNaN(WORLD.snapX)){WORLD.snapX=ax;WORLD.snapZ=az;}
       // pull GPS estimate gently toward the snapped centreline so it doesn't wander off-road
       WORLD.ego.e+=(sn.qx-WORLD.ego.e)*0.02;WORLD.ego.n+=(-sn.qz-WORLD.ego.n)*0.02;
-    }else{let diff=((S.hdg-WORLD.hdg+540)%360)-180;WORLD.hdg+=diff*0.1;WORLD.snapX=WORLD.ego.e;WORLD.snapZ=-WORLD.ego.n;}
+    }else{const tg=S.speed>8?S.hdg:(S.compass!=null?S.compass:WORLD.hdg);let diff=((tg-WORLD.hdg+540)%360)-180;WORLD.hdg+=diff*0.1;WORLD.snapX=WORLD.ego.e;WORLD.snapZ=-WORLD.ego.n;}
     worldRot.rotation.y=WORLD.hdg*Math.PI/180;worldTrans.position.set(-WORLD.snapX,0,-WORLD.snapZ);
   }else{for(const d of dashes){d.position.z+=ms*dt;if(d.position.z>30)d.position.z-=ROAD_LEN;}}
   beamMat.uniforms.uT.value=now/1000;
@@ -868,7 +883,7 @@ function frame(now){
   H.obj.textContent=count+' tracked';
   H.camt.textContent=String(Math.floor(t/60)).padStart(2,'0')+':'+String(Math.floor(t%60)).padStart(2,'0');
   H.devt.textContent=S.detMs.toFixed(0)+' ms · '+S.detFps.toFixed(0)+' det/s · raw '+S.rawCount;
-  $('#osm').textContent=(S.osmStatus||'osm: waiting for GPS')+(S.lat?'  ('+S.lat.toFixed(4)+','+S.lon.toFixed(4)+')':'');
+  $('#osm').textContent=(S.osmStatus||'osm: waiting for GPS')+(S.lat?'  ±'+Math.round(S.gpsAcc||0)+'m':'')+(S.compass!=null?'  compass '+Math.round(S.compass)+'°':'  no compass');
   H.inf.textContent=S.detMs?Math.round(S.detMs)+' ms':'';
 
   S.frames++;if(now-S.fpsT>1000){H.fps.textContent=S.frames+' fps';S.frames=0;S.fpsT=now;}
