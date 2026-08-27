@@ -1,0 +1,14 @@
+node_modules/
+ios/App/Pods/
+ios/App/build/
+android/.gradle/
+android/build/
+android/app/build/
+*.tflite
+*.onnx
+*.mlpackage
+*.mlmodel
+*.pt
+runs/
+datasets/
+.DS_Store
