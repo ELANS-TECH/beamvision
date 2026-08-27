@@ -6,6 +6,7 @@ android/build/
 android/app/build/
 *.tflite
 *.onnx
+!web/models/*.onnx
 *.mlpackage
 *.mlmodel
 *.pt
