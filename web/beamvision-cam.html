@@ -200,7 +200,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
 <script>
 (function(){
 'use strict';
-const $=s=>document.querySelector(s);const BUILD='cam-b16';
+const $=s=>document.querySelector(s);const BUILD='cam-b17';
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 const C={bg:0x0B0E14,road:0x10141C,lane:0x39445A,edge:0x4C5870,ego:0x2A3140,beam:0xFF9500,
   car:0x56627A,bus:0x6E7A90,truck:0x5F6878,moto:0x9BB0D1,bike:0x8FD1B0,ped:0xF2D6A8,light:0x3B4455,stop:0xC93B3B,
@@ -311,15 +311,21 @@ function roadFromOSM(t){const L=wayLayout(t);layoutRoad({laneW:L.laneW,ours:L.ou
 layoutRoad({laneW:LANE_W,ours:1,oncoming:1,egoIdx:0,cls:'residential',margin:2.0});
 
 /* ---------- buildings & mapped signals ---------- */
-const bldgMat=new THREE.MeshStandardMaterial({color:0x151A24,roughness:.9,metalness:.05,envMapIntensity:.15,flatShading:true});
+const bldgMat=new THREE.MeshStandardMaterial({color:0x151A24,roughness:.9,metalness:.05,envMapIntensity:.15,flatShading:true,side:THREE.DoubleSide});
+bldgMat.onBeforeCompile=sh=>{sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  if(length(vViewPosition)<18.0) discard;');};
+const bldgEdgeMatNear=null;
 const bldgEdgeMat=new THREE.LineBasicMaterial({color:0x2A3242,transparent:true,opacity:.6});
+bldgEdgeMat.onBeforeCompile=sh=>{sh.vertexShader=sh.vertexShader.replace('#include <fog_vertex>','#include <fog_vertex>\n  vDist=length(mvPosition.xyz);').replace('void main() {','varying float vDist;\nvoid main() {');sh.fragmentShader=sh.fragmentShader.replace('void main() {','varying float vDist;\nvoid main() {\n  if(vDist<18.0) discard;');};
+function pointInPoly(x,z,ring){let inside=false;for(let i=0,j=ring.length-1;i<ring.length;j=i++){const xi=ring[i].x,zi=ring[i].z,xj=ring[j].x,zj=ring[j].z;if(((zi>z)!==(zj>z))&&(x<(xj-xi)*(z-zi)/(zj-zi)+xi))inside=!inside;}return inside;}
 let bldgMesh=null,bldgLines=null,signalGroup=null;
 function buildBuildings(){
   if(bldgMesh){roadWorld.remove(bldgMesh);bldgMesh.geometry.dispose();bldgMesh=null;}
   if(bldgLines){roadWorld.remove(bldgLines);bldgLines.geometry.dispose();bldgLines=null;}
   const B=WORLD.buildings||[];if(!B.length)return;
   const pos=[],nrm=[],lin=[];
+  const egoX=WORLD.ego.e,egoZ=-WORLD.ego.n;
   for(const b of B){
+    if(pointInPoly(egoX,egoZ,b.pts))continue;
     const p=b.pts;const n=p.length-((Math.abs(p[0].x-p[p.length-1].x)<0.01&&Math.abs(p[0].z-p[p.length-1].z)<0.01)?1:0);if(n<3)continue;
     const ring=p.slice(0,n);const h=b.h;
     // walls
