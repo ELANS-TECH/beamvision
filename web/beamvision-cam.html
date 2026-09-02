@@ -167,7 +167,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
   <canvas id="boxes"></canvas>
 </div>
 
-<div id="start"><div class="box"><div class="name">BEAM <b>VISION</b></div><p>Camera test build. Mount the phone on the windshield, then start. Needs HTTPS, camera and location permission, and internet for the first model download.</p><button id="bmodel" style="display:block;margin:0 auto 14px;background:var(--panel);border:1px solid var(--line);color:var(--ink);padding:9px 12px;border-radius:10px;font-size:12px">Model: YOLO11n (WebGPU)</button><button id="startbtn">Start camera</button><div id="startmsg"></div></div></div>
+<div id="start"><div class="box"><div class="name">BEAM <b>VISION</b></div><p>Camera test build. Mount the phone on the windshield, then start. Needs HTTPS, camera and location permission, and internet for the first model download.</p><button id="bmodel" style="display:block;margin:0 auto 14px;background:var(--panel);border:1px solid var(--line);color:var(--ink);padding:9px 12px;border-radius:10px;font-size:12px">Model: BeamVision D-FINE</button><button id="startbtn">Start camera</button><div id="startmsg"></div></div></div>
 <div id="dev">
   <div class="handle" id="devh"><span>PROTOTYPE · <b id="scene-name">—</b></span><span id="devt" class="mono">0.0s</span></div>
   <div id="osm" class="mono" style="color:var(--ink-dim);font-size:10px;margin-top:6px"></div>
@@ -200,7 +200,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
 <script>
 (function(){
 'use strict';
-const $=s=>document.querySelector(s);const BUILD='cam-b20';
+const $=s=>document.querySelector(s);const BUILD='cam-b21';
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 const C={bg:0x0B0E14,road:0x10141C,lane:0x39445A,edge:0x4C5870,ego:0x2A3140,beam:0xFF9500,
   car:0x56627A,bus:0x6E7A90,truck:0x5F6878,moto:0x9BB0D1,bike:0x8FD1B0,ped:0xF2D6A8,light:0x3B4455,stop:0xC93B3B,
@@ -681,7 +681,7 @@ const L=LANE_W;
 
 /* ---------- state / controls ---------- */
 const S={smooth:true,layout:'auto',speed:0,gpsSpeed:0,hdg:0,last:performance.now(),frames:0,fpsT:0,t0:performance.now(),
-  hfov:70,camH:1.3,pitch:0,minScore:0.4,every:1,delegate:'',model:'yolo',inSize:640,hood:0.66,rawCount:0,calibUntil:0,calibBest:null,lat:null,lon:null,road:'',limit:null,lanes:null,lastOsm:0,osmLat:0,osmLon:0,calib:false,mode:'3d',detFps:0,detMs:0,batch:0,seenBatch:0,dets:[],vw:1280,vh:720};
+  hfov:70,camH:1.3,pitch:0,minScore:0.4,every:1,delegate:'',model:'dfine',inSize:640,hood:0.66,rawCount:0,calibUntil:0,calibBest:null,lat:null,lon:null,road:'',limit:null,lanes:null,lastOsm:0,osmLat:0,osmLon:0,calib:false,mode:'3d',detFps:0,detMs:0,batch:0,seenBatch:0,dets:[],vw:1280,vh:720};
 $('#hfov').oninput=e=>{S.hfov=+e.target.value;$('#hfovv').textContent=S.hfov+'°';};
 $('#camh').oninput=e=>{S.camH=e.target.value/100;$('#camhv').textContent=S.camH.toFixed(2)+'m';};
 $('#pitch').oninput=e=>{S.pitch=+e.target.value;$('#pitchv').textContent=S.pitch+'°';};
@@ -716,7 +716,7 @@ function tryCalibrate(dets){
   if(yb<S.hood*Hh-4&&th>0.01){S.camH=Math.max(0.6,Math.min(2.5,10*Math.tan(th)));$('#camh').value=Math.round(S.camH*100);$('#camhv').textContent=S.camH.toFixed(2)+'m';}
   $('#bcal').textContent='Calibrated: FOV '+Math.round(S.hfov)+'° h '+S.camH.toFixed(2)+'m';
 }
-$('#bmodel').onclick=e=>{S.model=S.model==='yolo'?'mp':'yolo';e.target.textContent='Model: '+(S.model==='yolo'?'YOLO11n (WebGPU)':'EfficientDet (MediaPipe)');};
+$('#bmodel').onclick=e=>{S.model=S.model==='dfine'?'yolo':S.model==='yolo'?'mp':'dfine';e.target.textContent='Model: '+(S.model==='dfine'?'BeamVision D-FINE':S.model==='yolo'?'YOLO11n (WebGPU)':'EfficientDet (MediaPipe)');};
 
 /* ---------- post: bloom + vignette ---------- */
 const POST={on:true};
@@ -763,7 +763,8 @@ window.addEventListener('resize',resize);resize();
 
 /* ---------- camera geometry: pixel box -> road position ---------- */
 const REAL_W={ped:0.55,bike:0.65,moto:0.8,car:1.85,bus:2.5,truck:2.5,light:0.4,stop:0.75};
-const CLASS={person:'ped',bicycle:'bike',motorcycle:'moto',car:'car',bus:'bus',truck:'truck','traffic light':'light','stop sign':'stop'};
+const CLASS={person:'ped',bicycle:'bike',motorcycle:'moto',car:'car',bus:'bus',truck:'truck','traffic light':'light','stop sign':'stop',tl_red:'light',tl_yellow:'light',tl_green:'light',tl_off:'light'};
+const TL_STATE={tl_red:'red',tl_yellow:'amber',tl_green:'green',tl_off:null};
 function project(box,type){
   const W=S.vw,Hh=S.vh;const hf=S.hfov*Math.PI/180;const fx=(Math.max(W,Hh)/2)/Math.tan(hf/2);const fy=fx;const cx=W/2,cy=Hh/2;
   const xc=box.originX+box.width/2,yb=box.originY+box.height;
@@ -976,13 +977,41 @@ const CDN="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 const MODEL="https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite";
 const ORT="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
 const YOLO_URL=new URL("models/yolo11n.onnx",location.href).href;
+const DFINE_URL=new URL("models/dfine_n_beamvision.onnx",location.href).href;
 const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"];
 const WORKER_SRC=`
 const COCO=${JSON.stringify(COCO)};
+const BV11=['person','bicycle','motorcycle','car','truck','bus','tl_red','tl_yellow','tl_green','tl_off','traffic_sign'];
 let mode=null,det=null,session=null,inW=0,inH=0,canvas=null,ctx=null,ep='';
 function iou(a,b){const x1=Math.max(a[0],b[0]),y1=Math.max(a[1],b[1]),x2=Math.min(a[2],b[2]),y2=Math.min(a[3],b[3]);const w=Math.max(0,x2-x1),h=Math.max(0,y2-y1);const i=w*h;return i/((a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-i+1e-6);}
+async function initOrt(){if(self.ort)return;importScripts("${ORT}ort.webgpu.min.js");ort.env.wasm.wasmPaths="${ORT}";ort.env.wasm.numThreads=1;}
+let dfSession=null,dfCanvas=null,dfCtx=null,dfEp='';
+async function initDfine(){
+  await initOrt();
+  const buf=await (await fetch("${DFINE_URL}")).arrayBuffer();
+  try{dfSession=await ort.InferenceSession.create(buf,{executionProviders:['webgpu'],graphOptimizationLevel:'all'});dfEp='WebGPU';}
+  catch(e){dfSession=await ort.InferenceSession.create(buf,{executionProviders:['wasm'],graphOptimizationLevel:'all'});dfEp='WASM';}
+  dfCanvas=new OffscreenCanvas(640,640);dfCtx=dfCanvas.getContext('2d',{willReadFrequently:true});
+}
+async function runDfine(bitmap,w,h){
+  dfCtx.drawImage(bitmap,0,0,640,640);
+  const px=dfCtx.getImageData(0,0,640,640).data;const n=640*640;const f=new Float32Array(3*n);const k=1/255;
+  for(let i=0,j=0;i<n;i++,j+=4){f[i]=px[j]*k;f[n+i]=px[j+1]*k;f[2*n+i]=px[j+2]*k;}
+  const feeds={images:new ort.Tensor('float32',f,[1,3,640,640]),orig_target_sizes:new ort.Tensor('int64',BigInt64Array.from([BigInt(w),BigInt(h)]),[1,2])};
+  const out=await dfSession.run(feeds);
+  const labels=out.labels.data,boxes=out.boxes.data,scores=out.scores.data;
+  const dets=[];
+  for(let i=0;i<scores.length;i++){
+    const s=scores[i];if(s<0.32)continue;
+    const x1=boxes[i*4],y1=boxes[i*4+1],x2=boxes[i*4+2],y2=boxes[i*4+3];
+    const name=BV11[Number(labels[i])]||'unknown';
+    dets.push({boundingBox:{originX:Math.max(0,x1),originY:Math.max(0,y1),width:Math.min(w,x2)-Math.max(0,x1),height:Math.min(h,y2)-Math.max(0,y1)},categories:[{categoryName:name,score:s}]});
+    if(dets.length>=25)break;
+  }
+  return dets;
+}
 async function initYolo(){
-  importScripts("${ORT}ort.webgpu.min.js");
+  await initOrt();
   ort.env.wasm.wasmPaths="${ORT}";ort.env.wasm.numThreads=1;
   const buf=await (await fetch("${YOLO_URL}")).arrayBuffer();
   try{session=await ort.InferenceSession.create(buf,{executionProviders:['webgpu'],graphOptimizationLevel:'all'});ep='WebGPU';}
@@ -1009,6 +1038,9 @@ self.onmessage=async e=>{
   const m=e.data;
   if(m.type==='init'){
     try{
+      if(m.model==='dfine'){await initDfine();mode='dfine';self.postMessage({type:'ready',delegate:'BeamVision·'+dfEp});return;}
+    }catch(err){self.postMessage({type:'warn',msg:'D-FINE failed: '+String(err&&err.message||err)+' — trying YOLO'});m.model='yolo';}
+    try{
       if(m.model==='yolo'){await initYolo();mode='yolo';self.postMessage({type:'ready',delegate:'YOLO11n·'+ep});return;}
     }catch(err){self.postMessage({type:'warn',msg:'YOLO failed: '+String(err&&err.message||err)+' — using EfficientDet'});}
     try{
@@ -1022,7 +1054,8 @@ self.onmessage=async e=>{
   }else if(m.type==='frame'&&mode){
     const t=performance.now();let dets;
     try{
-      if(mode==='yolo'){dets=await runYolo(m.bitmap,m.w,m.h,m.inSize);}
+      if(mode==='dfine'){dets=await runDfine(m.bitmap,m.w,m.h);}
+      else if(mode==='yolo'){dets=await runYolo(m.bitmap,m.w,m.h,m.inSize);}
       else{const r=det.detectForVideo(m.bitmap,m.ts);dets=r.detections.map(d=>({boundingBox:d.boundingBox,categories:d.categories.map(c=>({categoryName:c.categoryName,score:c.score}))}));}
     }catch(err){m.bitmap.close();self.postMessage({type:'error',msg:String(err.message||err)});return;}
     m.bitmap.close();
@@ -1045,7 +1078,7 @@ window.addEventListener('bv-start',async()=>{
         else if(m.type==='error'){busy=false;if(!ready){BV.workerErr('worker: '+m.msg);worker.terminate();mainThread();}else BV.workerErr('infer: '+m.msg);}
       };
       worker.onerror=e=>{if(!ready){BV.workerErr('worker onerror: '+(e.message||e.filename||'unknown'));worker.terminate();mainThread();}};
-      BV.status('Loading '+(BV.S.model==='yolo'?'YOLO11n (~10 MB)':'EfficientDet (~5 MB)')+'…');
+      BV.status('Loading '+(BV.S.model==='dfine'?'BeamVision model (~15 MB)':BV.S.model==='yolo'?'YOLO11n (~10 MB)':'EfficientDet (~5 MB)')+'…');
       worker.postMessage({type:'init',model:BV.S.model});
       const loop=async()=>{
         n++;
