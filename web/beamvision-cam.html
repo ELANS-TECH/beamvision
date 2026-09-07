@@ -172,9 +172,9 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
   <div class="handle" id="devh"><span>PROTOTYPE · <b id="scene-name">—</b></span><span id="devt" class="mono">0.0s</span></div>
   <div id="osm" class="mono" style="color:var(--ink-dim);font-size:10px;margin-top:6px"></div>
   <div id="werr" class="mono" style="color:var(--amber);font-size:10px;margin-top:6px;word-break:break-all;user-select:text;-webkit-user-select:text"></div>
-  <div class="row"><label>Cam FOV</label><input type="range" id="hfov" min="55" max="95" value="70"><span class="val mono" id="hfovv">70°</span></div>
+  <div class="row"><label>Cam FOV</label><input type="range" id="hfov" min="45" max="120" value="70"><span class="val mono" id="hfovv">70°</span></div>
   <div class="row"><label>Cam height</label><input type="range" id="camh" min="90" max="170" value="130"><span class="val mono" id="camhv">1.30m</span></div>
-  <div class="row"><label>Pitch</label><input type="range" id="pitch" min="-12" max="12" value="0"><span class="val mono" id="pitchv">0°</span></div>
+  <div class="row"><label>Pitch</label><input type="range" id="pitch" min="-30" max="30" value="0"><span class="val mono" id="pitchv">0°</span></div>
   <div class="row"><label>Min score</label><input type="range" id="score" min="20" max="80" value="40"><span class="val mono" id="scorev">.40</span></div>
   <div class="row"><label>Hood line</label><input type="range" id="hood" min="40" max="100" value="66"><span class="val mono" id="hoodv">66%</span></div>
   <div class="row"><label>Input px</label><input type="range" id="insize" min="416" max="640" step="32" value="640"><span class="val mono" id="insizev">640</span></div>
@@ -200,7 +200,7 @@ body.portrait #cam{right:calc(var(--safe-r) + 16px);top:calc(var(--safe-t) + 60p
 <script>
 (function(){
 'use strict';
-const $=s=>document.querySelector(s);const BUILD='cam-b25';
+const $=s=>document.querySelector(s);const BUILD='cam-b26';
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 const C={bg:0x0B0E14,road:0x10141C,lane:0x39445A,edge:0x4C5870,ego:0x2A3140,beam:0xFF9500,
   car:0x56627A,bus:0x6E7A90,truck:0x5F6878,moto:0x9BB0D1,bike:0x8FD1B0,ped:0xF2D6A8,light:0x3B4455,stop:0xC93B3B,
@@ -683,11 +683,15 @@ const L=LANE_W;
 /* ---------- state / controls ---------- */
 const S={smooth:true,layout:'auto',speed:0,gpsSpeed:0,hdg:0,last:performance.now(),frames:0,fpsT:0,t0:performance.now(),
   hfov:70,camH:1.3,pitch:0,minScore:0.4,every:1,delegate:'',model:'dfine',inSize:640,hood:0.66,rawCount:0,calibUntil:0,calibBest:null,lat:null,lon:null,road:'',limit:null,lanes:null,lastOsm:0,osmLat:0,osmLon:0,calib:false,mode:'3d',detFps:0,detMs:0,batch:0,seenBatch:0,dets:[],vw:1280,vh:720};
-$('#hfov').oninput=e=>{S.hfov=+e.target.value;$('#hfovv').textContent=S.hfov+'°';};
-$('#camh').oninput=e=>{S.camH=e.target.value/100;$('#camhv').textContent=S.camH.toFixed(2)+'m';};
-$('#pitch').oninput=e=>{S.pitch=+e.target.value;$('#pitchv').textContent=S.pitch+'°';};
+/* calibration persistence (survives ?v= reloads) */
+function saveCal(){try{localStorage.setItem('bv_cal',JSON.stringify({hfov:S.hfov,camH:S.camH,pitch:S.pitch,hood:S.hood}));}catch(e){}}
+function applyCal(){$('#hfov').value=Math.round(S.hfov);$('#hfovv').textContent=Math.round(S.hfov)+'°';$('#camh').value=Math.round(S.camH*100);$('#camhv').textContent=S.camH.toFixed(2)+'m';$('#pitch').value=Math.round(S.pitch);$('#pitchv').textContent=Math.round(S.pitch)+'°';$('#hood').value=Math.round(S.hood*100);$('#hoodv').textContent=Math.round(S.hood*100)+'%';}
+try{const c=JSON.parse(localStorage.getItem('bv_cal')||'null');if(c&&isFinite(c.hfov)){S.hfov=c.hfov;S.camH=c.camH;S.pitch=c.pitch;S.hood=c.hood;applyCal();$('#bcal').textContent='Calibrated: FOV '+Math.round(S.hfov)+'° pitch '+Math.round(S.pitch)+'°';}}catch(e){}
+$('#hfov').oninput=e=>{S.hfov=+e.target.value;$('#hfovv').textContent=S.hfov+'°';saveCal();};
+$('#camh').oninput=e=>{S.camH=e.target.value/100;$('#camhv').textContent=S.camH.toFixed(2)+'m';saveCal();};
+$('#pitch').oninput=e=>{S.pitch=+e.target.value;$('#pitchv').textContent=S.pitch+'°';saveCal();};
 $('#score').oninput=e=>{S.minScore=e.target.value/100;$('#scorev').textContent=S.minScore.toFixed(2).replace(/^0/,'');};
-$('#hood').oninput=e=>{S.hood=e.target.value/100;$('#hoodv').textContent=Math.round(S.hood*100)+'%';};
+$('#hood').oninput=e=>{S.hood=e.target.value/100;$('#hoodv').textContent=Math.round(S.hood*100)+'%';saveCal();};
 $('#insize').oninput=e=>{S.inSize=+e.target.value;$('#insizev').textContent=S.inSize;};
 $('#every').oninput=e=>{S.every=+e.target.value;$('#everyv').textContent='1/'+S.every;};
 $('#bsmooth').onclick=e=>{S.smooth=!S.smooth;e.target.textContent='Smoothing '+(S.smooth?'ON':'OFF');e.target.classList.toggle('on',S.smooth);};
@@ -710,12 +714,12 @@ function tryCalibrate(dets){
   const W=S.vw,Hh=S.vh;const fxNow=(Math.max(W,Hh)/2)/Math.tan(S.hfov*Math.PI/360);
   const fxNeeded=10*best.box.width/1.85;               // fx that makes this box = 10 m by width
   const hf=2*Math.atan((Math.max(W,Hh)/2)/fxNeeded)*180/Math.PI;
-  S.hfov=Math.max(50,Math.min(100,hf));$('#hfov').value=Math.round(S.hfov);$('#hfovv').textContent=Math.round(S.hfov)+'°';
-  // ground-plane reference: set camera height so the box bottom also reads 10 m (only if above hood line)
+  S.hfov=Math.max(45,Math.min(120,hf));
+  // ground-plane reference: camera height is physical (slider), so fit PITCH such that the box bottom reads 10 m
   const yb=best.box.originY+best.box.height,cy=Hh/2;const fx=(Math.max(W,Hh)/2)/Math.tan(S.hfov*Math.PI/360);
-  const th=Math.atan((yb-cy)/fx)-S.pitch*Math.PI/180;
-  if(yb<S.hood*Hh-4&&th>0.01){S.camH=Math.max(0.6,Math.min(2.5,10*Math.tan(th)));$('#camh').value=Math.round(S.camH*100);$('#camhv').textContent=S.camH.toFixed(2)+'m';}
-  $('#bcal').textContent='Calibrated: FOV '+Math.round(S.hfov)+'° h '+S.camH.toFixed(2)+'m';
+  if(yb<S.hood*Hh-4){const thImg=Math.atan((yb-cy)/fx),thNeed=Math.atan(S.camH/10);S.pitch=Math.max(-30,Math.min(30,(thImg-thNeed)*180/Math.PI));}
+  applyCal();saveCal();
+  $('#bcal').textContent='Calibrated: FOV '+Math.round(S.hfov)+'° pitch '+Math.round(S.pitch)+'°';
 }
 $('#bmodel').onclick=e=>{S.model=S.model==='dfine'?'yolo':S.model==='yolo'?'mp':'dfine';e.target.textContent='Model: '+(S.model==='dfine'?'BeamVision D-FINE':S.model==='yolo'?'YOLO11n (WebGPU)':'EfficientDet (MediaPipe)');};
 
@@ -857,9 +861,9 @@ window.addEventListener('deviceorientation',e=>{if(e.absolute)onOrient(e);},true
 /* ---------- GPS ---------- */
 function startGPS(){
   if(!navigator.geolocation)return;
-  navigator.geolocation.watchPosition(p=>{const c=p.coords;let v=(c.speed!=null&&!isNaN(c.speed))?c.speed:0;if(v<0.8||(c.accuracy&&c.accuracy>25&&v<3))v=0;S.gpsSpeed=v*3.6;if(v>1&&c.heading!=null&&!isNaN(c.heading))S.hdg=c.heading;S.lat=c.latitude;S.lon=c.longitude;
+  navigator.geolocation.watchPosition(p=>{const c=p.coords;let v=(c.speed!=null&&!isNaN(c.speed))?c.speed:0;if(v<0.8||(c.accuracy&&c.accuracy>25&&v<3))v=0;S.gpsSpeed=v*3.6;if(v>1&&c.heading!=null&&!isNaN(c.heading)){S.hdg=c.heading;S.hdgSet=true;}S.lat=c.latitude;S.lon=c.longitude;
     if(!WORLD.fetchAt||(WORLD.fetchCentre&&dist(c.latitude,c.longitude,WORLD.fetchCentre.lat,WORLD.fetchCentre.lon)>WORLD.fetchRadius*0.55)||(WORLD.failedAt&&performance.now()-WORLD.failedAt>15000))fetchWorld(c.latitude,c.longitude);
-    if(WORLD.origin){const l=toLocal(c.latitude,c.longitude);const acc=c.accuracy||15;const k=acc<8?0.5:acc<20?0.3:acc<40?0.15:0.05;if(!WORLD.hasFix){WORLD.ego.e=l.e;WORLD.ego.n=l.n;WORLD.hasFix=true;}else{WORLD.ego.e+=(l.e-WORLD.ego.e)*k;WORLD.ego.n+=(l.n-WORLD.ego.n)*k;}S.gpsAcc=acc;}
+    if(WORLD.origin){const l=toLocal(c.latitude,c.longitude);const acc=c.accuracy||15;const k=(acc<8?0.5:acc<20?0.3:acc<40?0.15:0.05)*(S.speed>3?1:0.15);if(!WORLD.hasFix){WORLD.ego.e=l.e;WORLD.ego.n=l.n;WORLD.hasFix=true;}else{WORLD.ego.e+=(l.e-WORLD.ego.e)*k;WORLD.ego.n+=(l.n-WORLD.ego.n)*k;}S.gpsAcc=acc;}
     if(!WORLD.ready)osmLookup();},
     ()=>{},{enableHighAccuracy:true,maximumAge:500,timeout:10000});
 }
@@ -913,9 +917,13 @@ function frame(now){
     if(sn){
       if(WORLD.way!==sn.w){WORLD.way=sn.w;const t=sn.w.tags;S.road=t.name||t.ref||(t.highway||'').replace('_',' ');const m=(t.maxspeed||'').match(/(\d+)/);S.limit=m?(+m[1]*(/mph/.test(t.maxspeed)?1.609:1)):null;S.hwClass=t.highway||'';roadFromOSM(t);roadGroup.visible=false;}
       // tangent sign: follow GPS heading
-      let tx=sn.tx,tz=sn.tz;const gh=S.hdg*Math.PI/180;const fx=Math.sin(gh),fz=-Math.cos(gh);if(tx*fx+tz*fz<0){tx=-tx;tz=-tz;}
+      // heading reference: seed once from compass (or GPS course), then our own smoothed heading — it cannot flip while stopped
+      if(!WORLD.seeded){if(S.hdgSet)WORLD.hdg=S.hdg;else if(S.compass!=null)WORLD.hdg=S.compass;WORLD.seeded=true;}
+      if(S.speed>8&&S.hdgSet){const dd=Math.abs(((S.hdg-WORLD.hdg+540)%360)-180);if(dd>120)WORLD.hdg=S.hdg;} // 180° guard when moving
+      let tx=sn.tx,tz=sn.tz;const gh=WORLD.hdg*Math.PI/180;const fx=Math.sin(gh),fz=-Math.cos(gh);if(tx*fx+tz*fz<0){tx=-tx;tz=-tz;}
       const roadHdg=Math.atan2(tx,-tz)*180/Math.PI;
-      let target=S.speed>8?roadHdg:(S.compass!=null?S.compass:WORLD.hdg);let diff=((target-WORLD.hdg+540)%360)-180;WORLD.hdg+=diff*(S.speed>8?0.15:0.05);
+      // road bearing drives heading at ALL speeds (compass in a car is 15–30° off; the road is not)
+      let diff=((roadHdg-WORLD.hdg+540)%360)-180;WORLD.hdg+=diff*(S.speed>8?0.15:0.08);
       // lateral: measured offset of the GPS position from the centreline (right = +), smoothed, clamped to our lanes
       const L=sn.w.lay;const rx0=-tz,rz0=tx;
       const exs=WORLD.ego.e,ezs=-WORLD.ego.n;
@@ -925,10 +933,12 @@ function frame(now){
       else{lo=0.5*L.laneW;hi=(L.ours-0.5)*L.laneW;}
       const latC=Math.max(lo,Math.min(hi,latM));
       if(WORLD.latS===undefined)WORLD.latS=latC;
-      WORLD.latS+=(latC-WORLD.latS)*0.06;
-      // gentle pull toward the nearest lane centre so it reads as lanes, not drift
+      // only let GPS move us sideways while actually moving with a decent fix; stopped = frozen (GPS jitter > lane width)
+      const gacc=S.gpsAcc||15;
+      if(S.speed>3&&gacc<=12)WORLD.latS+=(latC-WORLD.latS)*(gacc<6?0.08:0.04);
+      // pull toward the nearest lane centre so it reads as lanes, not drift
       const li=Math.round((WORLD.latS-lo)/L.laneW);const lc=lo+li*L.laneW;
-      if(Math.abs(WORLD.latS-lc)<0.7)WORLD.latS+=(lc-WORLD.latS)*0.04;
+      if(Math.abs(WORLD.latS-lc)<L.laneW*0.5)WORLD.latS+=(lc-WORLD.latS)*0.08;
       const lat=WORLD.latS;
       const rx=-tz,rz=tx;const ax=sn.qx+rx*lat,az=sn.qz+rz*lat;
       WORLD.snapX+=((ax)-(WORLD.snapX||ax))*0.3;WORLD.snapZ+=((az)-(WORLD.snapZ||az))*0.3;
@@ -1039,7 +1049,7 @@ async function runDfine(bitmap,w,h){
   let out;
   try{out=await dfSession.run(feeds);}
   catch(e){
-    if(!dfTriedWasm&&dfEp==='WebGPU'){dfTriedWasm=true;self.postMessage({type:'warn',msg:'webgpu run failed ('+(e.message||e)+') — rebuilding on wasm'});await dfCreate('wasm');self.postMessage({type:'ready',delegate:'BeamVision·WASM'});out=await dfSession.run(feeds);}
+    if(!dfTriedWasm&&dfEp==='WebGPU'){dfTriedWasm=true;dfFail=' · webgpu run: '+String(e&&e.message||e).slice(0,140);await dfCreate('wasm');self.postMessage({type:'ready',delegate:'BeamVision·WASM'});out=await dfSession.run(feeds);}
     else throw e;
   }
   const P=dfPick(out);if(!P.boxes||!P.scores){self.postMessage({type:'warn',msg:'dfine outputs unrecognised: '+Object.keys(out).map(k=>k+String(out[k].dims)).join(' ')});return [];}
